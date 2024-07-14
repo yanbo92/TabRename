@@ -21,31 +21,32 @@ if (typeof GM_getValue === 'undefined' || typeof GM_setValue === 'undefined') {
 function getById(id, context) { return (context || document).getElementById(id); }
 function getByTag(tag, context) { return (context || document).getElementsByTagName(tag); }
 
-var domainPatterns = GM_getValue('domains-deletable-buffer', '') || GM_getValue('domains', '').replace(/\./g, '\\.'),
-    domainMatch = window.location.host.toLowerCase().match(domainPatterns),
-    originalTitle = document.title;
+function initializeTitle() {
+  var domainPatterns = GM_getValue('domains-deletable-buffer', '') || GM_getValue('domains', '').replace(/\./g, '\\.');
+  var domainMatch = window.location.host.toLowerCase().match(domainPatterns);
+  var originalTitle = document.title;
 
-if (domainMatch) {
-  var searchPattern = GM_getValue(domainMatch[0] + '-find', '');
-  if (searchPattern.match(/^regex:/)) {
-    searchPattern = searchPattern.replace(/^regex:/, '');
-    searchPattern = new RegExp(searchPattern, 'i');
+  if (domainMatch) {
+    var searchPattern = GM_getValue(domainMatch[0] + '-find', '');
+    if (searchPattern.match(/^regex:/)) {
+      searchPattern = searchPattern.replace(/^regex:/, '');
+      searchPattern = new RegExp(searchPattern, 'i');
+    }
+    var replacePattern = GM_getValue(domainMatch[0] + '-with', '');
   }
-  var replacePattern = GM_getValue(domainMatch[0] + '-with', '');
-}
-if (originalTitle && searchPattern) {
-  document.title = originalTitle.replace(searchPattern, replacePattern);
+  if (originalTitle && searchPattern) {
+    document.title = originalTitle.replace(searchPattern, replacePattern);
+  }
 }
 
 function addTitleRule(searchType, shouldEscape, isImport, domain, findPattern, replacePattern) {
-  var domainCheck = /^[a-z0-9_\.-]+$/,
-      errorNotifier = getById('error-notifier');
+  var errorNotifier = getById('error-notifier');
   if (!isImport) {
     domain = getById('domain-input').value.toLowerCase();
     findPattern = getById('find-input').value;
     replacePattern = getById('replace-input').value;
   }
-  if (!domain.match(domainCheck)) {
+  if (!validateDomain(domain)) {
     errorNotifier.innerHTML = '域名无效。请使用字母 a-z、数字 0-9、下划线 _、减号 - 或点 .';
     return;
   }
@@ -57,25 +58,39 @@ function addTitleRule(searchType, shouldEscape, isImport, domain, findPattern, r
     if (!existingDomains) {
       GM_setValue('domains', domain);
     } else {
-      var domainRegex = domain.replace(/\./g, '\\.');
-      domainRegex = new RegExp('(^|\\|)' + domainRegex + '($|\\|)');
-      if (!existingDomains.match(domainRegex)) {
-        existingDomains = existingDomains + '|' + domain;
-        GM_setValue('domains', existingDomains);
-      }
+      existingDomains = addDomainToList(existingDomains, domain);
+      GM_setValue('domains', existingDomains);
     }
     GM_setValue(domain + '-find', findPattern);
     if (replacePattern) {
-      if (shouldEscape === 'escape') replacePattern = replacePattern.replace(/\$/g, '$$$$');
+      replacePattern = escapeReplacePattern(shouldEscape, replacePattern);
       GM_setValue(domain + '-with', replacePattern);
     } else if (GM_getValue(domain + '-with', '')) {
       GM_deleteValue(domain + '-with');
     }
     if (!isImport) {
-      GM_setValue('domains-deletable-buffer', GM_getValue('domains', '').replace(/\./g, '\\.'));
+      GM_setValue('domains-deletable-buffer', existingDomains.replace(/\./g, '\\.'));
       errorNotifier.innerHTML = '成功！规则已添加。';
     }
   }
+}
+
+function validateDomain(domain) {
+  var domainCheck = /^[a-z0-9_\.-]+$/;
+  return domain.match(domainCheck);
+}
+
+function escapeReplacePattern(shouldEscape, replacePattern) {
+  if (shouldEscape === 'escape') return replacePattern.replace(/\$/g, '$$$$');
+  return replacePattern;
+}
+
+function addDomainToList(existingDomains, domain) {
+  var domainRegex = new RegExp('(^|\\|)' + domain.replace(/\./g, '\\.') + '($|\\|)');
+  if (!existingDomains.match(domainRegex)) {
+    existingDomains += '|' + domain;
+  }
+  return existingDomains;
 }
 
 function manageTitleRules() {
@@ -83,19 +98,33 @@ function manageTitleRules() {
   doc.documentElement.innerHTML = '<head><style>.item{white-space:pre;font-family:monospace;margin:0;padding:0;}html>input{margin-left:1em;}</style></head>';
   var domains = GM_getValue('domains', '');
   if (domains) {
-    var domainList = domains.split('|');
-    for(var i = 0, len = domainList.length; i < len; i++) {
-      var findPattern = GM_getValue(domainList[i] + '-find', '');
-      var replacePattern = GM_getValue(domainList[i] + '-with', '');
-      var ruleBox = doc.createElement('div');
-      ruleBox.className = 'item';
-      ruleBox.innerHTML = '<span>' + domainList[i] + '</span><br /><span>' + findPattern + '</span>\
-<br /><span>' + replacePattern + '</span><br /><button>Remove</button><br /><span>========</span>';
-      if (doc.body) doc.body.appendChild(ruleBox);
-      else doc.documentElement.appendChild(ruleBox);
-      getByTag('button', ruleBox)[0].addEventListener('click', removeTitleRule);
-    }
+    displayRules(domains);
   }
+  createManagementUI(doc, domains);
+}
+
+function displayRules(domains) {
+  var doc = document;
+  var domainList = domains.split('|');
+  for (var i = 0, len = domainList.length; i < len; i++) {
+    var findPattern = GM_getValue(domainList[i] + '-find', '');
+    var replacePattern = GM_getValue(domainList[i] + '-with', '');
+    var ruleBox = createRuleBox(domainList[i], findPattern, replacePattern);
+    if (doc.body) doc.body.appendChild(ruleBox);
+    else doc.documentElement.appendChild(ruleBox);
+  }
+}
+
+function createRuleBox(domain, findPattern, replacePattern) {
+  var ruleBox = document.createElement('div');
+  ruleBox.className = 'item';
+  ruleBox.innerHTML = '<span>' + domain + '</span><br /><span>' + findPattern + '</span>\
+<br /><span>' + replacePattern + '</span><br /><button>Remove</button><br /><span>========</span>';
+  getByTag('button', ruleBox)[0].addEventListener('click', removeTitleRule);
+  return ruleBox;
+}
+
+function createManagementUI(doc, domains) {
   var importList = doc.createElement('textarea');
   importList.id = 'import-list';
   doc.documentElement.appendChild(importList);
@@ -121,20 +150,23 @@ function removeTitleRule() {
   GM_deleteValue(domain + '-find');
   GM_deleteValue(domain + '-with');
   var domains = GM_getValue('domains', '');
-  var domainRegex = domain.replace(/\./g, '\\.');
-  domainRegex = new RegExp('(^|\\|)' + domainRegex + '($|\\|)');
-  domains = domains.replace(domainRegex, '$1').replace(/(\|)\||\|$/g, '$1');
+  domains = removeDomainFromList(domains, domain);
   GM_setValue('domains', domains);
   item.parentNode.removeChild(item);
-  GM_setValue('domains-deletable-buffer', GM_getValue('domains', '').replace(/\./g, '\\.'));
+  GM_setValue('domains-deletable-buffer', domains.replace(/\./g, '\\.'));
+}
+
+function removeDomainFromList(domains, domain) {
+  var domainRegex = new RegExp('(^|\\|)' + domain.replace(/\./g, '\\.') + '($|\\|)');
+  domains = domains.replace(domainRegex, '$1').replace(/(\|)\||\|$/g, '$1');
+  return domains;
 }
 
 function importTitleRules() {
-  var doc = document,
-      list = getById('import-list').value;
-  list = list.match(/.+/g).join('--------').replace(/(--------)+========$/, '').split('========--------');
-  for(var i = 0, len = list.length; i < len; i++) {
-    var rule = list[i].split('--------');
+  var list = getById('import-list').value;
+  var rules = list.match(/.+/g).join('--------').replace(/(--------)+========$/, '').split('========--------');
+  for (var i = 0, len = rules.length; i < len; i++) {
+    var rule = rules[i].split('--------');
     if (rule[0] && rule[1]) addTitleRule('str', 'noescape', true, rule[0], rule[1], rule[2]);
   }
   GM_setValue('domains-deletable-buffer', GM_getValue('domains', '').replace(/\./g, '\\.'));
@@ -142,8 +174,9 @@ function importTitleRules() {
 }
 
 function sortTitleRules() {
-  GM_setValue('domains', GM_getValue('domains', '').split('|').sort().join('|'));
-  GM_setValue('domains-deletable-buffer', GM_getValue('domains', '').replace(/\./g, '\\.'));
+  var domains = GM_getValue('domains', '').split('|').sort().join('|');
+  GM_setValue('domains', domains);
+  GM_setValue('domains-deletable-buffer', domains.replace(/\./g, '\\.'));
   manageTitleRules();
 }
 
@@ -156,9 +189,8 @@ function exportTitleRules() {
 }
 
 function toggleQuickMenu() {
-  var doc = document,
-      overlay = getById('overlay'),
-      box = getById('grom-TitleManager');
+  var overlay = getById('overlay');
+  var box = getById('grom-TitleManager');
 
   if (box) {
     box.parentNode.removeChild(box);
@@ -166,12 +198,25 @@ function toggleQuickMenu() {
     return;
   }
 
-  overlay = doc.createElement('div');
+  overlay = createOverlay();
+  box = createPopupBox();
+
+  getById('add-button').addEventListener('click', function() { addTitleRule('str','escape', false) });
+  getById('add-regex-button').addEventListener('click', function() { addTitleRule('regex','noescape', false) });
+  getById('manage-button').addEventListener('click', manageTitleRules);
+  getById('close-button').addEventListener('click', toggleQuickMenu);
+}
+
+function createOverlay() {
+  var overlay = document.createElement('div');
   overlay.id = 'overlay';
   overlay.style = 'position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.5);z-index:1000;';
-  doc.body.appendChild(overlay);
+  document.body.appendChild(overlay);
+  return overlay;
+}
 
-  box = doc.createElement('div');
+function createPopupBox() {
+  var box = document.createElement('div');
   box.style = 'position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);width:90%;max-width:600px;padding:1em;background:white;border-radius:5px;box-shadow:0 4px 6px rgba(0,0,0,0.5);z-index:1001;text-align:center;';
   box.id = 'grom-TitleManager';
   box.innerHTML = '<h1 style="margin:initial;">Title Manager<input type="button" id="close-button" value="X" style="float:right;" /></h1>\
@@ -183,13 +228,10 @@ function toggleQuickMenu() {
     <p><input type="button" id="add-button" value="添加" /> 或 <input type="button" id="add-regex-button" value="添加为正则表达式" />\
     &nbsp; &nbsp; &nbsp; <input type="button" id="manage-button" value="查看和管理所有标题规则" /></p>\
     <br /><br />';
-  doc.body.appendChild(box);
+  document.body.appendChild(box);
   box.scrollIntoView();
-
-  getById('add-button').addEventListener('click', function() { addTitleRule('str','escape', false) });
-  getById('add-regex-button').addEventListener('click', function() { addTitleRule('regex','noescape', false) });
-  getById('manage-button').addEventListener('click', manageTitleRules);
-  getById('close-button').addEventListener('click', toggleQuickMenu);
+  return box;
 }
 
 GM_registerMenuCommand("menu", toggleQuickMenu);
+initializeTitle();
