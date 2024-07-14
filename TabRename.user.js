@@ -1,5 +1,5 @@
 // ==UserScript==
-// @name        Tab Rename
+// @name        Title Manager
 // @namespace   grom
 // @description Manage page titles per (sub)domain. On any website, click Greasemonkey > User Script Commands > Title Manager's menu.
 // @include     *
@@ -13,164 +13,152 @@
 // @updateURL https://update.greasyfork.org/scripts/194/Title%20Manager.meta.js
 // ==/UserScript==
 
-if ( GM_getValue === 'undefined' || GM_setValue === 'undefined' ) {
-  alert('=== Title Manager ===\n\nUnable to load or store values.\
-  \nPlease use supported script managers:\nGreasemonkey, Tampermonkey...');
+if (typeof GM_getValue === 'undefined' || typeof GM_setValue === 'undefined') {
+  alert('=== Title Manager ===\n\nUnable to load or store values.\nPlease use supported script managers:\nGreasemonkey, Tampermonkey...');
 }
 
-// shorthands
-function $i(a,b) { return (b||document).getElementById(a); }
-function $t(a,b) { return (b||document).getElementsByTagName(a); }
+// 简写函数
+function getById(id, context) { return (context || document).getElementById(id); }
+function getByTag(tag, context) { return (context || document).getElementsByTagName(tag); }
 
-var domains = GM_getValue('domains-deletable-buffer', '') || GM_getValue('domains', '').replace(/\./g, '\\.'),
-    match = window.location.host.toLowerCase().match(domains),
-    t = document.title;
+var domainPatterns = GM_getValue('domains-deletable-buffer', '') || GM_getValue('domains', '').replace(/\./g, '\\.'),
+    domainMatch = window.location.host.toLowerCase().match(domainPatterns),
+    originalTitle = document.title;
 
-if (match) {
-  var _find = GM_getValue(match[0] + '-find', '');
-    if (_find.match(/^regex:/)) {
-      _find = _find.replace(/^regex:/, '');
-      _find = new RegExp(_find, 'i');
-    }
-  var _with = GM_getValue(match[0] + '-with', '');
-}
-if (t &&_find) document.title = t.replace(_find, _with);
-
-function tm_add(StrReg, escape, isItImport, _domain, _find, _with) {
-  // StrReg: is "Search for" string or regex - 'str' or 'reg'
-  // escape: escape dollar signs or not - 'escape' or 'noescape'
-  var _domainCheck = /^[a-z0-9_\.-]+$/,
-      tm_error = $i('tm-error-notifier');
-  if (!isItImport) {
-    var _domain = $i('tm-domain').value.toLowerCase();
-    var _find = $i('tm-find').value;
-    var _with = $i('tm-with').value;
+if (domainMatch) {
+  var searchPattern = GM_getValue(domainMatch[0] + '-find', '');
+  if (searchPattern.match(/^regex:/)) {
+    searchPattern = searchPattern.replace(/^regex:/, '');
+    searchPattern = new RegExp(searchPattern, 'i');
   }
-  if (!_domain.match(_domainCheck)) {
-    tm_error.innerHTML = 'Domain invalid. Please use letters a-z, numbers 0-9, underscore _, minus - or dot .';
+  var replacePattern = GM_getValue(domainMatch[0] + '-with', '');
+}
+if (originalTitle && searchPattern) {
+  document.title = originalTitle.replace(searchPattern, replacePattern);
+}
+
+function addTitleRule(searchType, shouldEscape, isImport, domain, findPattern, replacePattern) {
+  var domainCheck = /^[a-z0-9_\.-]+$/,
+      errorNotifier = getById('error-notifier');
+  if (!isImport) {
+    domain = getById('domain-input').value.toLowerCase();
+    findPattern = getById('find-input').value;
+    replacePattern = getById('replace-input').value;
+  }
+  if (!domain.match(domainCheck)) {
+    errorNotifier.innerHTML = '域名无效。请使用字母 a-z、数字 0-9、下划线 _、减号 - 或点 .';
     return;
   }
-  // if "Search for" is regex, make sure it starts with "regex:"
-  if (StrReg === 'reg') {
-    if (!_find.match(/^regex:/)) _find = _find.replace(/^/, 'regex:');
+  if (searchType === 'regex') {
+    if (!findPattern.match(/^regex:/)) findPattern = findPattern.replace(/^/, 'regex:');
   }
-  // store values, if "domain" and "Search for" are valid
-  if (_find) { // we don't need to check for _domain, we passed _domainCheck
-    var domains = GM_getValue('domains', '');
-    if (!domains) {
-      GM_setValue('domains', _domain);
-    }
-    else {
-      var match = _domain.replace(/\./g, '\\.');
-      var match = new RegExp('(^|\\|)' + match + '($|\\|)');
-      if (!domains.match(match)) {
-        var domains = domains + '|' + _domain;
-        GM_setValue('domains', domains);
+  if (findPattern) {
+    var existingDomains = GM_getValue('domains', '');
+    if (!existingDomains) {
+      GM_setValue('domains', domain);
+    } else {
+      var domainRegex = domain.replace(/\./g, '\\.');
+      domainRegex = new RegExp('(^|\\|)' + domainRegex + '($|\\|)');
+      if (!existingDomains.match(domainRegex)) {
+        existingDomains = existingDomains + '|' + domain;
+        GM_setValue('domains', existingDomains);
       }
     }
-    GM_setValue(_domain + '-find', _find);
-    if (_with) {
-      // if not adding as regex, escape dollar signs
-      if (escape === 'escape') var _with = _with.replace(/\$/g, '$$$$');
-      GM_setValue(_domain + '-with', _with);
+    GM_setValue(domain + '-find', findPattern);
+    if (replacePattern) {
+      if (shouldEscape === 'escape') replacePattern = replacePattern.replace(/\$/g, '$$$$');
+      GM_setValue(domain + '-with', replacePattern);
+    } else if (GM_getValue(domain + '-with', '')) {
+      GM_deleteValue(domain + '-with');
     }
-    else if (GM_getValue(_domain + '-with', '')) GM_deleteValue(_domain + '-with');
-    // if not in importing loop, create buffer for domains
-    if (!isItImport) {
+    if (!isImport) {
       GM_setValue('domains-deletable-buffer', GM_getValue('domains', '').replace(/\./g, '\\.'));
-      tm_error.innerHTML = 'Success! Rule added.';
+      errorNotifier.innerHTML = '成功！规则已添加。';
     }
   }
 }
 
-function tm_manage() {
-  var d = document;
-  d.documentElement.innerHTML = '<head><style>.item{white-space:pre;font-family:monospace;margin:0;padding:0;}html>input{margin-left:1em;}</style></head>';
+function manageTitleRules() {
+  var doc = document;
+  doc.documentElement.innerHTML = '<head><style>.item{white-space:pre;font-family:monospace;margin:0;padding:0;}html>input{margin-left:1em;}</style></head>';
   var domains = GM_getValue('domains', '');
   if (domains) {
-    var domains = domains.split('|');
-    for(var i = 0, j = domains.length; i < j; i++) {
-      var _find = GM_getValue(domains[i] + '-find', '');
-      var _with = GM_getValue(domains[i] + '-with', '');
-      var box = d.createElement('div');
-      box.className = 'item';
-      box.innerHTML = '<span>' + domains[i] + '</span><br /><span>' + _find + '</span>\
-<br /><span>' + _with + '</span><br /><button>Remove</button><br /><span>========</span>';
-      if (d.body) d.body.appendChild(box);
-      else d.documentElement.appendChild(box);
-      $t('button', box)[0].addEventListener('click', tm_remove);
+    var domainList = domains.split('|');
+    for(var i = 0, len = domainList.length; i < len; i++) {
+      var findPattern = GM_getValue(domainList[i] + '-find', '');
+      var replacePattern = GM_getValue(domainList[i] + '-with', '');
+      var ruleBox = doc.createElement('div');
+      ruleBox.className = 'item';
+      ruleBox.innerHTML = '<span>' + domainList[i] + '</span><br /><span>' + findPattern + '</span>\
+<br /><span>' + replacePattern + '</span><br /><button>Remove</button><br /><span>========</span>';
+      if (doc.body) doc.body.appendChild(ruleBox);
+      else doc.documentElement.appendChild(ruleBox);
+      getByTag('button', ruleBox)[0].addEventListener('click', removeTitleRule);
     }
   }
-  // import
-  var impList = d.createElement('textarea');
-  impList.id = 'tm-import-list';
-  d.documentElement.appendChild(impList);
-  var imp = d.createElement('input');
-  imp.type = 'button'; imp.id = 'tm-import'; imp.value = 'Import';
-  d.documentElement.appendChild(imp);
-  imp.addEventListener('click', tm_import);
-  // sort button if 2 or more domains
-  if (domains.length>1) {
-    var sor = d.createElement('input');
-    sor.type = 'button'; sor.id = 'tm-sort'; sor.value = 'Sort';
-    d.documentElement.appendChild(sor);
-    sor.addEventListener('click', tm_sort);
-    // and export button
-    var exo = d.createElement('input');
-    exo.type = 'button'; exo.id = 'tm-export'; exo.value = 'Prepare for export';
-    d.documentElement.appendChild(exo);
-    exo.addEventListener('click', tm_export);
+  var importList = doc.createElement('textarea');
+  importList.id = 'import-list';
+  doc.documentElement.appendChild(importList);
+  var importButton = doc.createElement('input');
+  importButton.type = 'button'; importButton.id = 'import'; importButton.value = 'Import';
+  doc.documentElement.appendChild(importButton);
+  importButton.addEventListener('click', importTitleRules);
+  if (domains.split('|').length > 1) {
+    var sortButton = doc.createElement('input');
+    sortButton.type = 'button'; sortButton.id = 'sort'; sortButton.value = 'Sort';
+    doc.documentElement.appendChild(sortButton);
+    sortButton.addEventListener('click', sortTitleRules);
+    var exportButton = doc.createElement('input');
+    exportButton.type = 'button'; exportButton.id = 'export'; exportButton.value = 'Prepare for export';
+    doc.documentElement.appendChild(exportButton);
+    exportButton.addEventListener('click', exportTitleRules);
   }
 }
 
-function tm_remove() {
+function removeTitleRule() {
   var item = this.parentNode;
-  var _domain = $t('span', item)[0].innerHTML;
-  GM_deleteValue(_domain + '-find');
-  GM_deleteValue(_domain + '-with');
+  var domain = getByTag('span', item)[0].innerHTML;
+  GM_deleteValue(domain + '-find');
+  GM_deleteValue(domain + '-with');
   var domains = GM_getValue('domains', '');
-  var match = _domain.replace(/\./g, '\\.');
-  // match: (^ or |) + single/current domain + ($ or |)
-  var match = new RegExp('(^|\\|)' + match + '($|\\|)');
-  // replace: matched single domain with ^ or |; replace: || with | or remove |$
-  var domains = domains.replace(match, '$1').replace(/(\|)\||\|$/g, '$1');
+  var domainRegex = domain.replace(/\./g, '\\.');
+  domainRegex = new RegExp('(^|\\|)' + domainRegex + '($|\\|)');
+  domains = domains.replace(domainRegex, '$1').replace(/(\|)\||\|$/g, '$1');
   GM_setValue('domains', domains);
   item.parentNode.removeChild(item);
-  // re-create buffer for domains
   GM_setValue('domains-deletable-buffer', GM_getValue('domains', '').replace(/\./g, '\\.'));
 }
 
-function tm_import() {
-  var d = document,
-      list = $i('tm-import-list').value;
-  var list = list.match(/.+/g).join('--------').replace(/(--------)+========$/, '').split('========--------');
-  for(var i = 0, j = list.length; i < j; i++) {
-    var listB = list[i].split('--------');
-    if (listB[0] && listB[1]) tm_add('str', 'noescape', 'true', listB[0], listB[1], listB[2]);
+function importTitleRules() {
+  var doc = document,
+      list = getById('import-list').value;
+  list = list.match(/.+/g).join('--------').replace(/(--------)+========$/, '').split('========--------');
+  for(var i = 0, len = list.length; i < len; i++) {
+    var rule = list[i].split('--------');
+    if (rule[0] && rule[1]) addTitleRule('str', 'noescape', true, rule[0], rule[1], rule[2]);
   }
-  // create buffer for domains, refresh page
   GM_setValue('domains-deletable-buffer', GM_getValue('domains', '').replace(/\./g, '\\.'));
-  tm_manage();
+  manageTitleRules();
 }
 
-function tm_sort() {
+function sortTitleRules() {
   GM_setValue('domains', GM_getValue('domains', '').split('|').sort().join('|'));
   GM_setValue('domains-deletable-buffer', GM_getValue('domains', '').replace(/\./g, '\\.'));
-  tm_manage();
+  manageTitleRules();
 }
 
-function tm_export() {
-  // remove everything except the list
-  var list = document.querySelectorAll('#grom-TitleManager, button, button+br, textarea, input, body>*:not(.item)');
-  for (var i = 0, j = list.length; i < j; i++) { list[i].parentNode.removeChild(list[i]); }
-  alert('=== Title Manager ===\n\nList prepared for export. You\'ll need to:\
-  \nSelect all text on the page (Ctrl-A) and copy it (Ctrl-C).\nThen paste that text anywhere you want, perhaps in a new file.')
+function exportTitleRules() {
+  var elementsToRemove = document.querySelectorAll('#grom-TitleManager, button, button+br, textarea, input, body>*:not(.item)');
+  for (var i = 0, len = elementsToRemove.length; i < len; i++) {
+    elementsToRemove[i].parentNode.removeChild(elementsToRemove[i]);
+  }
+  alert('=== Title Manager ===\n\n列表已准备导出。你需要：\n选择页面上的所有文本 (Ctrl-A) 并复制它 (Ctrl-C)。\n然后将该文本粘贴到任何地方，可能是一个新文件。')
 }
 
-function tm_QuickMenu() {
-  var d = document,
-      overlay = $i('tm-overlay'),
-      box = $i('grom-TitleManager');
+function toggleQuickMenu() {
+  var doc = document,
+      overlay = getById('overlay'),
+      box = getById('grom-TitleManager');
 
   if (box) {
     box.parentNode.removeChild(box);
@@ -178,33 +166,30 @@ function tm_QuickMenu() {
     return;
   }
 
-  // Create overlay
-  overlay = d.createElement('div');
-  overlay.id = 'tm-overlay';
+  overlay = doc.createElement('div');
+  overlay.id = 'overlay';
   overlay.style = 'position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.5);z-index:1000;';
-  d.body.appendChild(overlay);
+  doc.body.appendChild(overlay);
 
-  // Create the popup box
-  box = d.createElement('div');
+  box = doc.createElement('div');
   box.style = 'position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);width:90%;max-width:600px;padding:1em;background:white;border-radius:5px;box-shadow:0 4px 6px rgba(0,0,0,0.5);z-index:1001;text-align:center;';
   box.id = 'grom-TitleManager';
-  box.innerHTML = '<h1 style="margin:initial;">Title Manager<input type="button" id="tm-close" value="X" style="float:right;" /></h1>\
-    <p>Full title: "<strong>' + document.title + '</strong>"</p>\
-    <p id="tm-error-notifier"></p>\
-    <p>Domain: <input type="text" id="tm-domain" value="' + window.location.host.toLowerCase() + '" /></p>\
-    <p>Search for: <input type="text" id="tm-find" value="' + document.title + '" /></p>\
-    <p>Replace with: <input type="text" id="tm-with" value="" /></p>\
-    <p><input type="button" id="tm-add" value="Add" /> or <input type="button" id="tm-add-regex" value="Add as regex" />\
-    &nbsp; &nbsp; &nbsp; <input type="button" id="tm-manage" value="View and manage all title rules" /></p>\
+  box.innerHTML = '<h1 style="margin:initial;">Title Manager<input type="button" id="close-button" value="X" style="float:right;" /></h1>\
+    <p>完整标题：" <strong>' + document.title + '</strong> "</p>\
+    <p id="error-notifier"></p>\
+    <p>域名：<input type="text" id="domain-input" value="' + window.location.host.toLowerCase() + '" /></p>\
+    <p>搜索：<input type="text" id="find-input" value="' + document.title + '" /></p>\
+    <p>替换：<input type="text" id="replace-input" value="" /></p>\
+    <p><input type="button" id="add-button" value="添加" /> 或 <input type="button" id="add-regex-button" value="添加为正则表达式" />\
+    &nbsp; &nbsp; &nbsp; <input type="button" id="manage-button" value="查看和管理所有标题规则" /></p>\
     <br /><br />';
-  d.body.appendChild(box);
+  doc.body.appendChild(box);
   box.scrollIntoView();
 
-  $i('tm-add').addEventListener('click', function() { tm_add('str','escape', false) });
-  $i('tm-add-regex').addEventListener('click', function() { tm_add('reg','noescape', false) });
-  $i('tm-manage').addEventListener('click', tm_manage);
-  $i('tm-close').addEventListener('click', tm_QuickMenu);
+  getById('add-button').addEventListener('click', function() { addTitleRule('str','escape', false) });
+  getById('add-regex-button').addEventListener('click', function() { addTitleRule('regex','noescape', false) });
+  getById('manage-button').addEventListener('click', manageTitleRules);
+  getById('close-button').addEventListener('click', toggleQuickMenu);
 }
 
-// Register the popup to be callable via the Greasemonkey menu
-GM_registerMenuCommand("Title Manager's menu", tm_QuickMenu);
+GM_registerMenuCommand("menu", toggleQuickMenu);
